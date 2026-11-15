@@ -10,6 +10,24 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "agon-delphi"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "web3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fc/d3/50022e6e05b58bff54c83259f7c39d7f13b50c0f420fb9bf240f3b7543ee/agon_delphi-0.3.0.tar.gz", hash = "sha256:79c052bfb990d6b2360d506e05d7f6b0a3db87ad61ea04ccaf522199ebe04795", size = 39790, upload-time = "2026-11-15T06:39:17.322Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/43/42/e29f1d2704a0c28569709ecd2107abab018897c973ceb007712500f3c576/agon_delphi-0.3.0-py3-none-any.whl", hash = "sha256:d043b36be8ca7395303d336711a85872dae1968ebfe02fc2544c3911cff1bf63", size = 48079, upload-time = "2026-11-15T06:39:16.127Z" },
+]
+
+[package.optional-dependencies]
+mcp = [
+    { name = "mcp" },
+]
+
+[[package]]
 name = "aiohappyeyeballs"
 version = "2.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1004,16 +1022,15 @@ wheels = [
 
 [[package]]
 name = "delphi-kit"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
-    { name = "httpx" },
-    { name = "web3" },
+    { name = "agon-delphi" },
 ]
 
 [package.optional-dependencies]
 mcp = [
-    { name = "mcp" },
+    { name = "agon-delphi", extra = ["mcp"] },
 ]
 
 [package.dev-dependencies]
@@ -1023,9 +1040,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.3" },
-    { name = "web3", specifier = ">=7" },
+    { name = "agon-delphi", specifier = ">=0.3.0" },
+    { name = "agon-delphi", extras = ["mcp"], marker = "extra == 'mcp'", specifier = ">=0.3.0" },
 ]
 provides-extras = ["mcp"]
 
