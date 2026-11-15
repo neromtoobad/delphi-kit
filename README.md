@@ -106,7 +106,7 @@ Claude Desktop, Cursor, or anything else that speaks MCP over stdio:
 }
 ```
 
-The read tools are `list_markets`, `get_market`, `quote_buy`, `quote_sell`, `get_positions` and `wallet_status`.
+The read tools are `list_markets`, `get_market`, `quote_buy`, `quote_sell`, `get_positions`, `wallet_status` and `my_record`.
 The write tools are `buy`, `sell` and `collect`.
 
 Without a key or `DELPHI_ALLOW_TRADING=true` the server is read-only, and the write tools say so instead of
@@ -120,6 +120,37 @@ sending anything. With trading on, every buy is checked first:
 | `DELPHI_ALLOWED_MARKETS` | all (comma list of addresses to restrict) |
 
 Use a separate wallet for the agent and only put in what you're willing to lose.
+
+## Flight recorder: a record nobody can edit
+
+Turn on `record=True` and every buy must first state what the agent believes. That belief is signed by the
+trading wallet, sealed until trading closes, and anchored on Gensyn mainnet by [Agon](https://agon.nerom.site).
+Nobody can see it before then or change it afterwards. When the market settles, the agent's record writes itself:
+
+- **Calibration:** were its probabilities better than the market's price at the time?
+- **Results:** what the same wallet actually bought and sold, read from the chain.
+
+```python
+d = Delphi(private_key=key, record=True, agent_name="my-agent")
+t = d.buy(m, "Yes", usd=2, belief={"Yes": 0.71}, reasoning="Polls moved after the debate.")
+t.record   # {'entry': 200, 'belief': 0.71, 'market_probability': 0.50, 'edge': 0.21,
+           #  'sealed_until': '2027-12-31T23:00:00Z', 'record_url': 'https://agon.nerom.site/#/agent/0x…', ...}
+```
+
+```bash
+delphi buy 0x4F5D… Yes --usd 2 --record --belief 0.71 --reason "Polls moved after the debate."
+```
+
+- **No entry, no trade.** A buy without a belief is refused, and so is one whose entry can't be logged.
+  `record="try"` trades anyway and says why the entry is missing.
+- **When it's logged.** The entry is sent after the trade has been simulated, so failed buys never leave entries.
+- **What it covers.** Mainnet markets whose trading window was at least 12 hours long; shorter ones are refused.
+- **Which server.** Entries go to https://agon.nerom.site. Agon is open source; point `recorder_url` or
+  `DELPHI_RECORDER_URL` at your own instance if you run one.
+- **In the MCP server.** Set `DELPHI_RECORD=true` (plus `DELPHI_AGENT_NAME`) and the `buy` tool requires the
+  agent's `probability` and `reasoning`. `my_record` shows what it has logged and, after settlement, how it scored.
+- **Proof for the model, too.** An entry can carry a receipt from Gensyn's REE (`receipt=`)
+  proving which open model produced the forecast. Agon re-runs receipts on a second machine.
 
 ## Alerts
 
@@ -157,6 +188,7 @@ notes are in [docs/contracts.md](docs/contracts.md).
 | Default approval | unlimited | exact amount |
 | Agent spending limits | no | yes |
 | Alerts | no | yes |
+| Sealed, scored record of what an agent believed | no | yes (`record=True`) |
 
 ## Tests
 
@@ -170,6 +202,8 @@ The fork tests run a private copy of Gensyn mainnet and put a throwaway wallet t
 - **LMSR:** buy with a $3 budget, sell half, jump the clock past the deadline, settle as Delphi's oracle relayer,
   redeem the winnings.
 - **DPM:** buy, let the market expire unsettled, liquidate.
+- **Flight recorder** (with `DELPHI_TEST_RECORDER_URL` pointing at a local Agon): a buy without a belief is
+  refused, then a belief is signed, accepted by Agon and sealed before the buy is sent.
 
 ## License
 

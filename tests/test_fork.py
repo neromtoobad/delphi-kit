@@ -16,6 +16,7 @@ import subprocess
 import time
 from pathlib import Path
 
+import httpx
 import pytest
 from web3 import Web3
 
@@ -45,7 +46,9 @@ def _free_port() -> int:
 def fork():
     port = _free_port()
     proc = subprocess.Popen([ANVIL, "--fork-url", os.environ.get("DELPHI_FORK_RPC", "https://gensyn-mainnet.g.alchemy.com/public"),
-                             "--port", str(port), "--chain-id", "685689", "--silent"])
+                             "--port", str(port), "--chain-id", "685689", "--silent",
+                             # the public RPC rate-limits; back off instead of failing
+                             "--retries", "12", "--fork-retry-backoff", "1500"])
     url = f"http://127.0.0.1:{port}"
     w3 = Web3(Web3.HTTPProvider(url))
     for _ in range(120):
@@ -148,3 +151,38 @@ def test_dpm_expire_and_liquidate(fork):
     print("liquidate", r)
     assert r["usd"] > 0 and abs(d.balance()["usd"] - before - r["usd"]) < 1e-6
     assert d.positions(markets=[m]) == []
+
+
+RECORDER = os.environ.get("DELPHI_TEST_RECORDER_URL")  # a local Agon server, e.g. http://localhost:8841
+
+
+@pytest.mark.skipif(not RECORDER, reason="set DELPHI_TEST_RECORDER_URL to a local Agon server")
+def test_flight_recorder(fork):
+    """record=True: no belief, no trade; with a belief, it is sealed on Agon before the buy is sent."""
+    from delphi_kit import DelphiError
+    url, w3 = fork
+    fixtures = httpx.get(f"{RECORDER}/league/v1/fixtures").json()["fixtures"]
+    live = Delphi(cache=True)
+    lmsr = {m.address.lower(): m for m in live.markets(status="open") if m.mechanism == "lmsr" and (m.pool_usd or 0) > 15}
+    target = next(f["market"] for f in reversed(fixtures) if f["market"] in lmsr)
+    d = Delphi(rpc_url=url, private_key=KEY, record=True, recorder_url=RECORDER, agent_name="delphi-kit fork test")
+    m = d.market(target)
+    _fund(w3, d, m.address, 5)
+    before = d.balance()["usd"]
+
+    with pytest.raises(DelphiError, match="say what you believe"):
+        d.buy(m, "Yes", usd=1)
+    assert d.balance()["usd"] == before  # nothing traded
+
+    t = d.buy(m, "Yes", usd=1, belief={"Yes": 0.62}, reasoning="Fork test: stated belief before buying.")
+    print("\nrecorded buy", t.record)
+    assert t.record["logged"] and t.record["belief"] == pytest.approx(0.62)
+    assert t.record["edge"] == pytest.approx(0.62 - m.probabilities[0], abs=1e-4)
+
+    rec = d.recorder.record()
+    mine = [f for f in rec["forecasts"] if f["id"] == t.record["entry"]]
+    assert mine, "entry missing from the agent's record"
+    print("entry as the public sees it while sealed:", mine[0])
+    assert rec["name"] == "delphi-kit fork test" and rec["client"] == "delphi-kit"
+    proof = httpx.get(t.record["proof_url"]).json()
+    print("proof", proof)

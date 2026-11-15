@@ -20,7 +20,10 @@ from .limits import Guard, LimitExceeded, Limits
 INSTRUCTIONS = """Delphi is a prediction market on the Gensyn chain, settled by an AI judge that reads each
 market's rules and named sources. Prices are probabilities (0-1). Before buying: read the market's rules and
 sources with get_market, quote with quote_buy, and check probability_after: thin markets move a lot on small
-trades. Trades are held to spending limits shown by wallet_status; never try to work around them."""
+trades. Trades are held to spending limits shown by wallet_status; never try to work around them.
+If wallet_status shows the flight recorder is on, every buy must state your honest probability for the outcome
+you buy and a short reason. It is sealed until trading closes and scored against the market when it settles, so
+state what you actually believe, not what justifies the trade."""
 
 READ = ToolAnnotations(read_only_hint=True, open_world_hint=True)
 WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True)
@@ -33,7 +36,10 @@ _guard: Optional[Guard] = None
 def client() -> Delphi:
     global _client
     if _client is None:
-        _client = Delphi(os.environ.get("DELPHI_NETWORK", "mainnet"))
+        rec = os.environ.get("DELPHI_RECORD", "").lower()
+        _client = Delphi(os.environ.get("DELPHI_NETWORK", "mainnet"),
+                         record="try" if rec == "try" else rec in ("1", "true", "yes"),
+                         agent_name=os.environ.get("DELPHI_AGENT_NAME"), agent_model=os.environ.get("DELPHI_AGENT_MODEL", ""))
     return _client
 
 
@@ -115,7 +121,9 @@ def get_positions(wallet: str = "") -> Any:
 def wallet_status() -> Any:
     """The agent's wallet address, USDC and gas balance, and its spending limits and spend so far today."""
     c = client()
-    out: dict[str, Any] = {"network": c.network.name, "limits": guard().status()}
+    out: dict[str, Any] = {"network": c.network.name, "limits": guard().status(),
+                           "flight_recorder": {"on": True, "mode": c.record_mode, "agent": c.recorder.name,
+                                               "record_url": c.recorder.agent_url} if c.recorder else {"on": False}}
     if c.address:
         try:
             out.update(c.balance())
@@ -128,13 +136,21 @@ def wallet_status() -> Any:
 
 
 @server.tool(annotations=WRITE)
-def buy(market: str, outcome: str, usd: float) -> Any:
+def buy(market: str, outcome: str, usd: float, probability: float = -1, reasoning: str = "") -> Any:
     """Buy shares of `outcome` with up to `usd` of USDC. Held to the per-trade, daily and slippage limits.
-    Quote first and read the rules; this sends a real transaction."""
+    Quote first and read the rules; this sends a real transaction.
+    probability: your honest probability (0-1) that `outcome` wins. Required when the flight recorder is on;
+    it is sealed with `reasoning` before the trade and scored after the market settles."""
     g = guard()
     try:
         g.check(market, usd)
-        t = client().buy(market, outcome, usd=usd, max_slippage=g.limits.max_slippage)
+        c = client()
+        belief = None
+        if c.recorder:
+            if not 0 < probability < 1:
+                raise ValueError("the flight recorder is on: pass probability, your honest chance (0-1) that this outcome wins")
+            belief = {outcome: probability}
+        t = c.buy(market, outcome, usd=usd, max_slippage=g.limits.max_slippage, belief=belief, reasoning=reasoning or None)
         g.record(t.usd)
         return t.to_dict()
     except (LimitExceeded, DelphiError, ValueError) as e:
@@ -169,6 +185,19 @@ def collect(market: str) -> Any:
             return c.liquidate(market)
         return _fail(DelphiError(f"market is {m.status}; nothing to collect yet"))
     except (LimitExceeded, DelphiError, ValueError) as e:
+        return _fail(e)
+
+
+@server.tool(annotations=READ)
+def my_record() -> Any:
+    """The agent's flight record: every sealed belief it logged before trading, and once markets settle, how its
+    probabilities scored against the market's. Sealed entries show no numbers until trading closes."""
+    c = client()
+    if not c.recorder:
+        return {"on": False, "note": "The flight recorder is off. Set DELPHI_RECORD=true to turn it on."}
+    try:
+        return {"record_url": c.recorder.agent_url, **c.recorder.record()}
+    except Exception as e:  # noqa: BLE001
         return _fail(e)
 
 

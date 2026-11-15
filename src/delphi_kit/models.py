@@ -102,6 +102,7 @@ class Trade(_Dict):
     tx_hash: str
     explorer_url: str
     approval_tx: Optional[str] = None
+    record: Optional[dict] = None      # the sealed entry logged before this trade (record=True), or why it wasn't
 
 
 @dataclass

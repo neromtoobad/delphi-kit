@@ -53,7 +53,11 @@ class Delphi:
     """
 
     def __init__(self, network: str | Network = "mainnet", *, private_key: str | None = None,
-                 rpc_url: str | None = None, cache: bool = True):
+                 rpc_url: str | None = None, cache: bool = True, record: bool | str = False,
+                 recorder_url: str | None = None, agent_name: str | None = None, agent_model: str = ""):
+        """``record=True`` turns on the flight recorder: every buy must state what the agent believes, and that
+        belief is sealed and anchored on chain (via Agon) before the trade is sent. No entry, no trade.
+        ``record="try"`` trades even if the entry can't be logged, and says why on the Trade."""
         self.network = network if isinstance(network, Network) else get_network(network)
         self.w3 = connect(self.network, rpc_url or os.environ.get("DELPHI_RPC_URL"))
         self.reader = Reader(self.w3, self.network)
@@ -68,6 +72,16 @@ class Delphi:
         self._addresses: dict[str, list[str]] = {}  # deployment name -> market addresses, oldest first
         self._meta: dict[str, tuple[Optional[dict], Optional[bool]]] = {}
         self._http = httpx.Client(timeout=20, follow_redirects=True, headers={"User-Agent": "delphi-kit"})
+        self.recorder = None
+        self.record_mode = "off"
+        if record:
+            if not self.account:
+                raise DelphiError("record=True needs a wallet key: entries are signed by the trading wallet")
+            if self.network.name != "mainnet":
+                raise DelphiError("the flight recorder covers mainnet markets only")
+            from .recorder import Recorder
+            self.recorder = Recorder(key, url=recorder_url, name=agent_name, model=agent_model, chain_id=self.network.chain_id)
+            self.record_mode = "try" if record == "try" else "required"
 
     # ------------------------------------------------------------------ wallet
 
@@ -366,12 +380,21 @@ class Delphi:
         return "0x" + r["transactionHash"].hex().removeprefix("0x")
 
     def buy(self, market: str | Market, outcome: int | str, *, usd: float | None = None, shares: float | None = None,
-            max_slippage: float = 0.02, approve_unlimited: bool = False) -> Trade:
+            max_slippage: float = 0.02, approve_unlimited: bool = False, belief=None, reasoning: str | None = None,
+            receipt: str | None = None) -> Trade:
         """Buy shares of one outcome. ``usd`` spends up to that budget; ``shares`` buys an exact count.
-        Approves only the amount needed unless ``approve_unlimited``."""
+        Approves only the amount needed unless ``approve_unlimited``.
+
+        With the flight recorder on, ``belief`` is required: the probabilities the agent believes, e.g.
+        ``{"Yes": 0.71}`` (one side is enough for yes/no markets). ``reasoning`` is sealed with it."""
         acct = self._need_account()
         m, idx = self._resolve(market, outcome)
         q = self.quote_buy(m, idx, usd=usd, shares=shares)
+        if self.recorder and belief is None:
+            raise DelphiError('the flight recorder is on: say what you believe, e.g. belief={"Yes": 0.7}')
+        if self.recorder:
+            from .recorder import belief_vector
+            belief_vector(m, belief)  # bad beliefs fail here, before any approval is sent
         max_in = math.ceil(q.usd_raw * (1 + max_slippage))
         have = self.token.functions.balanceOf(acct.address).call()
         if have < max_in:
@@ -380,11 +403,30 @@ class Delphi:
         approval = self._ensure_allowance(m.address, max_in, approve_unlimited)
         fn = self._gw[m.deployment].functions.buyExactOut(checksum(m.address), idx, q.shares_raw, max_in)
         sim = fn.call({"from": acct.address})
+        # log the belief last, once the trade is known to go through, so the record never has entries for trades
+        # that failed before sending
+        rec = self._log_belief(m, idx, belief, reasoning, receipt) if self.recorder else None
         r = self._send(fn)
         paid = int(sim[0] if isinstance(sim, (list, tuple)) else sim)
         h = "0x" + r["transactionHash"].hex().removeprefix("0x")
         return Trade(market=m.address, outcome=idx, outcome_label=q.outcome_label, side="buy", shares=q.shares,
-                     usd=paid / 10**self.network.token_decimals, tx_hash=h, explorer_url=self.tx_url(h), approval_tx=approval)
+                     usd=paid / 10**self.network.token_decimals, tx_hash=h, explorer_url=self.tx_url(h), approval_tx=approval,
+                     record=rec)
+
+    def _log_belief(self, m: Market, idx: int, belief, reasoning, receipt) -> dict:
+        """Seal the agent's belief before a trade. Raises (so nothing is traded) unless record="try"."""
+        from .recorder import RecorderError, belief_vector
+        vec = belief_vector(m, belief)
+        mine, theirs = vec[idx] / (sum(vec) or 1), (m.probabilities[idx] if idx < len(m.probabilities) else None)
+        try:
+            e = self.recorder.log(m, vec, reasoning, receipt=receipt)
+        except (RecorderError, ValueError) as err:
+            if self.record_mode == "try":
+                return {"logged": False, "error": str(err)}
+            raise DelphiError(f"not traded: the belief could not be recorded ({err})") from None
+        return {"logged": True, "entry": e.id, "belief": round(mine, 4), "market_probability": theirs,
+                "edge": round(mine - theirs, 4) if theirs is not None else None, "sealed_until": e.sealed_until,
+                "record_url": e.url, "proof_url": e.proof_url}
 
     def sell(self, market: str | Market, outcome: int | str, shares: float | None = None, *,
              max_slippage: float = 0.02) -> Trade:

@@ -132,3 +132,49 @@ def test_every_deployment_has_an_abi():
         for dep in net.deployments:
             names = {x.get("name") for x in abi(dep.kind) if x.get("type") == "function"}
             assert {"getMarket", "marketStatus", "buyExactOut", "quoteBuyExactOut"} <= names, (net.name, dep.name)
+
+
+# ------------------------------------------------------------------ flight recorder
+
+from delphi_kit.recorder import Recorder, belief_vector, to_basis_points  # noqa: E402
+
+
+@pytest.mark.parametrize("probs", [[0.62, 0.38], [1, 0], [0.333, 0.333, 0.334], [0.999, 0.0005, 0.0005], [5, 3, 2],
+                                   [1 / 7] * 7, [0.5] + [0.5 / 40] * 40])
+def test_basis_points_always_valid(probs):
+    bp = to_basis_points(probs)
+    assert sum(bp) == 10000 and all(100 <= b <= 9900 for b in bp) and len(bp) == len(probs)
+
+
+def test_basis_points_keep_the_shape():
+    assert to_basis_points([0.62, 0.38]) == [6200, 3800]
+    assert to_basis_points([1, 0]) == [9900, 100]
+
+
+def test_belief_vector_accepts_one_side_labels_and_lists():
+    m = _m("0xa", "q", outcomes=("Yes", "No"))
+    assert belief_vector(m, {"Yes": 0.7}) == pytest.approx([0.7, 0.3])
+    assert belief_vector(m, {"no": 0.25}) == pytest.approx([0.75, 0.25])
+    assert belief_vector(m, {0: 0.6}) == pytest.approx([0.6, 0.4])
+    assert belief_vector(m, [0.1, 0.9]) == [0.1, 0.9]
+    three = _m("0xb", "q", outcomes=("A", "B", "C"))
+    assert belief_vector(three, {"A": 0.5}) == pytest.approx([0.5, 0.25, 0.25])
+    with pytest.raises(ValueError):
+        belief_vector(m, {"Yes": 0.8, "No": 0.4})
+    with pytest.raises(ValueError):
+        belief_vector(m, [0.2, 0.3, 0.5])
+
+
+def test_forecast_signature_recovers_to_the_wallet():
+    from eth_account import Account
+    from eth_account.messages import encode_typed_data
+    key = "0x" + "11" * 32
+    r = Recorder(key, url="http://unused")
+    msg = {"market": "0x4F5DC6b636c226CeC0C2403f988f24431b9Cc463", "probabilities": [6200, 3800], "issuedAt": 1763190000,
+           "visibility": 0, "reasoningHash": "0x" + "00" * 32, "receiptHash": "0x" + "00" * 32}
+    sig = r._sign("Forecast", msg)
+    from delphi_kit.recorder import TYPES
+    typed = encode_typed_data(full_message={"types": {"EIP712Domain": [{"name": "name", "type": "string"}, {"name": "version", "type": "string"},
+                                                                       {"name": "chainId", "type": "uint256"}], "Forecast": TYPES["Forecast"]},
+                                            "primaryType": "Forecast", "domain": {"name": "Agon", "version": "1", "chainId": 685689}, "message": msg})
+    assert Account.recover_message(typed, signature=sig) == Account.from_key(key).address

@@ -53,6 +53,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--usd", type=float, required=True)
     s.add_argument("--max-slippage", type=float, default=0.02)
     s.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    s.add_argument("--record", action="store_true", help="flight recorder: seal --belief on Agon before buying")
+    s.add_argument("--belief", type=float, help="your probability (0-1) that this outcome wins")
+    s.add_argument("--reason", default=None, help="why, sealed with the belief")
 
     s = sub.add_parser("sell", help="sell shares (needs DELPHI_PRIVATE_KEY)")
     s.add_argument("address")
@@ -83,7 +86,8 @@ def main(argv: list[str] | None = None) -> int:
 
     a = p.parse_args(argv)
     import os
-    d = Delphi(a.network or os.environ.get("DELPHI_NETWORK", "mainnet"))
+    record = getattr(a, "record", False) or os.environ.get("DELPHI_RECORD", "").lower() in ("1", "true", "yes")
+    d = Delphi(a.network or os.environ.get("DELPHI_NETWORK", "mainnet"), record=record if a.cmd == "buy" else False)
     try:
         return _run(d, a)
     except (DelphiError, ValueError) as e:
@@ -138,8 +142,15 @@ def _run(d: Delphi, a) -> int:
         q = d.quote_buy(a.address, a.outcome, usd=a.usd)
         if not _confirm(f"Buy {q.shares:.4f} {q.outcome_label} for ${q.usd:.2f} (max +{a.max_slippage:.0%})?", a.yes):
             return 1
-        t = d.buy(a.address, a.outcome, usd=a.usd, max_slippage=a.max_slippage)
-        _out(t.to_dict(), a.json) if a.json else print(f"bought {t.shares:.4f} {t.outcome_label} for ${t.usd:.4f}\n{t.explorer_url}")
+        belief = {a.outcome: a.belief} if a.belief is not None else None
+        t = d.buy(a.address, a.outcome, usd=a.usd, max_slippage=a.max_slippage, belief=belief, reasoning=a.reason)
+        if a.json:
+            _out(t.to_dict(), True)
+        else:
+            print(f"bought {t.shares:.4f} {t.outcome_label} for ${t.usd:.4f}\n{t.explorer_url}")
+            if t.record and t.record.get("logged"):
+                print(f"belief {t.record['belief']:.0%} vs market {t.record['market_probability']:.0%}, sealed until "
+                      f"{t.record['sealed_until']}\nrecord: {t.record['record_url']}")
         return 0
     if a.cmd == "sell":
         if not _confirm(f"Sell {'all' if a.shares is None else a.shares} {a.outcome} shares?", a.yes):
