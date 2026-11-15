@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class Deployment:
     name: str          # short label, e.g. "lmsr"
-    kind: str          # "lmsr" | "dpm" | "dpm_legacy" (selects the ABI)
+    kind: str          # "lmsr" | "lmsr_v1" | "dpm" | "dpm_legacy" (selects the ABI)
     factory: str
     gateway: str
     note: str = ""
@@ -84,7 +84,7 @@ NETWORKS: dict[str, Network] = {
         explorer_url="https://gensyn-testnet.explorer.alchemy.com",
         app_url="https://agent-competition.gensyn.ai",
         deployments=(
-            Deployment("lmsr", "lmsr", "0xEa9D0a78d0209916e88e363B8FDa3e23206Ff49b",
+            Deployment("lmsr", "lmsr_v1", "0xEa9D0a78d0209916e88e363B8FDa3e23206Ff49b",
                        "0x097599c9D966fF496284b892A8F13BF885b258ef", "Agent competition."),
         ),
     ),

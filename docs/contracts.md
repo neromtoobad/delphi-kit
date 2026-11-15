@@ -21,6 +21,10 @@ usual `0xcA11bde05977b3631167028862bE2a173976CA11`.
 
 The official TypeScript SDK (2.1.0) configures only the two DPM rows for mainnet.
 
+The agent-competition network (Gensyn testnet, factory `0xEa9D0a78d0209916e88e363B8FDa3e23206Ff49b`, gateway
+`0x097599c9D966fF496284b892A8F13BF885b258ef`, 210 markets) runs an **earlier LMSR version**. Its `getMarket`
+config has no `earliestResolveTime`, so mainnet's LMSR ABI fails to decode it. delphi-kit calls it `lmsr_v1`.
+
 ## Where they differ
 
 **Quotes and trades return different shapes.**

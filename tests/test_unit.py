@@ -121,3 +121,14 @@ def test_fit_budget_too_small():
     stub = SimpleNamespace(network=SimpleNamespace(token_decimals=6), _quote_raw=lambda *a: 10**9)
     with pytest.raises(DelphiError, match="too small"):
         Delphi._fit_budget(stub, _m("0xa", "q"), 0, 1)
+
+
+# ------------------------------------------------------------------ networks
+
+def test_every_deployment_has_an_abi():
+    from delphi_kit.chain import abi
+    from delphi_kit.networks import NETWORKS
+    for net in NETWORKS.values():
+        for dep in net.deployments:
+            names = {x.get("name") for x in abi(dep.kind) if x.get("type") == "function"}
+            assert {"getMarket", "marketStatus", "buyExactOut", "quoteBuyExactOut"} <= names, (net.name, dep.name)

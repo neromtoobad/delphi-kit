@@ -33,7 +33,7 @@ MULTICALL3_ABI = [
          {"name": "success", "type": "bool"}, {"name": "returnData", "type": "bytes"}]}]},
 ]
 
-ABI_FILE = {"lmsr": "LmsrGateway.json", "dpm": "DpmGateway.json", "dpm_legacy": "DpmGatewayLegacy.json",
+ABI_FILE = {"lmsr": "LmsrGateway.json", "lmsr_v1": "LmsrGatewayV1.json", "dpm": "DpmGateway.json", "dpm_legacy": "DpmGatewayLegacy.json",
             "factory": "DelphiFactory.json", "lmsr_market": "LmsrMarket.json"}
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "delphi-kit"
-version = "0.1.0"
+version = "0.1.1"
 description = "Read and trade Delphi prediction markets from Python and AI agents, with no API key: every market type, quotes, trades, positions, search, alerts and an MCP server."
 requires-python = ">=3.10"
 readme = "README.md"

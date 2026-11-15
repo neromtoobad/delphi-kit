@@ -183,7 +183,7 @@ class Delphi:
             out.append(Market(
                 address=checksum(a),
                 deployment=dep.name,
-                mechanism="lmsr" if dep.kind == "lmsr" else "dpm",
+                mechanism="lmsr" if dep.kind.startswith("lmsr") else "dpm",
                 status=STATUSES[st] if isinstance(st, int) else "unknown",
                 question=(meta or {}).get("question"),
                 outcomes=outcomes if len(outcomes) == n else (outcomes or [f"Outcome {j}" for j in range(n)]),
